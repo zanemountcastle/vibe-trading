@@ -1,0 +1,58 @@
+[package]
+name = "arb_platform"
+version = "0.1.0"
+edition = "2021"
+authors = ["Your Name <your.email@example.com>"]
+description = "High-frequency trading platform with multiple arbitrage strategies"
+
+[dependencies]
+# Core functionality
+tokio = { version = "1.28", features = ["full"] } # Async runtime
+actix-web = "4.3"                                # Web framework for API
+serde = { version = "1.0", features = ["derive"] } # Serialization/deserialization
+serde_json = "1.0"                               # JSON support
+chrono = { version = "0.4", features = ["serde"] } # Date and time
+tracing = "0.1"                                  # Logging and tracing
+tracing-subscriber = "0.3"                       # Logging implementation
+async-trait = "0.1"                              # Support for async traits
+
+# Database
+sqlx = { version = "0.6", features = ["runtime-tokio-rustls", "postgres", "chrono"] } # Database access
+redis = { version = "0.23", features = ["tokio-comp"] } # Fast in-memory store
+
+# Trading specific
+rust_decimal = "1.29"                            # Precise decimal calculations
+rust_decimal_macros = "1.29"                     # Macros for decimal literals
+
+# Concurrency and messaging
+futures = "0.3"                                  # Async utilities
+tokio-stream = "0.1"                             # Stream utilities
+crossbeam-channel = "0.5"                        # MPMC channels
+parking_lot = "0.12"                             # Fast mutex
+
+# API clients - these are examples, replace with actual APIs you'll use
+reqwest = { version = "0.11", features = ["json"] } # HTTP client
+websocket = "0.26"                               # WebSocket client
+tungstenite = { version = "0.19", features = ["native-tls"] } # WebSocket
+
+# Security
+jsonwebtoken = "8.3"                             # JWT authentication
+argon2 = "0.5"                                   # Password hashing
+rand = "0.8"                                     # Random number generation
+
+# Testing
+mockall = "0.11"                                 # Mocking for tests
+proptest = "1.2"                                 # Property-based testing
+
+[dependencies.uuid]
+version = "1.4"
+features = [
+    "v4",                 # Lets you generate random UUIDs
+    "fast-rng",           # Use a faster (but still sufficiently random) RNG
+    "macro-diagnostics",  # Enable better diagnostics for compile-time UUIDs
+    "serde"               # Enable serialization/deserialization
+]
+
+[dev-dependencies]
+criterion = "0.5"                                # Benchmarking
+test-case = "3.1"                                # Test case macros 

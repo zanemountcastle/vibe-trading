@@ -1,0 +1,13 @@
+{
+  "status": "ok",
+  "timestamp": "2025-03-09T18:17:47Z",
+  "version": "0.1.0",
+  "services": {
+    "database": "healthy",
+    "market_data": "healthy",
+    "order_system": "healthy",
+    "strategy_engine": "healthy"
+  },
+  "uptime": "00:00:01",
+  "mode": "simulation"
+}

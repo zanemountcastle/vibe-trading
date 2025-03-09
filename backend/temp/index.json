@@ -1,0 +1,7 @@
+{
+  "name": "ARB Platform API",
+  "version": "0.1.0",
+  "status": "simulation",
+  "message": "This is a simulation. For full functionality, install Rust.",
+  "documentation": "/api-docs"
+}

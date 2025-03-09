@@ -1,0 +1,11 @@
+{
+  "endpoints": [
+    "/api/health",
+    "/api/market/symbols",
+    "/api/market/data/{symbol}",
+    "/api/strategy",
+    "/api/strategy/{name}/params",
+    "/api/account/balance"
+  ],
+  "message": "This is a simulation mode. Install Rust for full functionality."
+}

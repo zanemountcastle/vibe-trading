@@ -1,0 +1,8 @@
+{
+  "data": {
+    "correlation_threshold": 0.8,
+    "z_score_threshold": 2.0,
+    "lookback_period": 100,
+    "max_position_size": 100000.0
+  }
+}
