@@ -4,11 +4,11 @@
 **/Cargo.lock
 
 # Node.js
-node_modules/
+**/node_modules/
 
 # Next.js
-.next/
-out/
+**/.next/
+**/out/
 
 # Logs
 logs
@@ -18,10 +18,10 @@ yarn-debug.log*
 yarn-error.log*
 
 # Dependency directories
-node_modules/
+**/node_modules/
 
 # Production
-build
+**/build/   
 
 # Misc
 .DS_Store
