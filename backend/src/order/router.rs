@@ -73,7 +73,7 @@ impl OrderRouter {
         // We need to try all exchanges since we don't know which one has the order
         let exchanges = self.exchanges.read().await;
         if exchanges.is_empty() {
-            return Err("No exchanges registered".to_string());
+            return Err("No exchanges registered for cancellation".to_string());
         }
         
         // Try each exchange
@@ -90,7 +90,8 @@ impl OrderRouter {
             }
         }
         
-        Err(format!("Order {} not found on any exchange", order_id))
+        // If we get here, no exchange could cancel the order
+        Err(format!("Order {} not found on any registered exchange", order_id))
     }
     
     pub async fn get_exchange_for_asset(&self, symbol: &str) -> Option<String> {

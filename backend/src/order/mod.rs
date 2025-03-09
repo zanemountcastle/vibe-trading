@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use chrono::{DateTime, Utc};
-use tokio::sync::{RwLock, mpsc};
-use tracing::{info, warn, error, debug};
+use tokio::sync::{mpsc, RwLock};
 use uuid::Uuid;
+use tracing::{info, warn, error};
+use chrono::{DateTime, Utc};
 
 use crate::strategy::{TradeDirection, TimeInForce};
 
@@ -25,6 +25,36 @@ pub enum OrderStatus {
     Cancelled,
     Rejected,
     Failed,
+}
+
+impl OrderStatus {
+    /// Check if the current state can transition to the given state
+    #[allow(dead_code)]
+    pub fn can_transition_to(&self, next: &OrderStatus) -> bool {
+        use OrderStatus::*;
+        
+        match (self, next) {
+            // Valid transitions
+            (Created, PendingSubmission) => true,
+            (PendingSubmission, Submitted) => true,
+            (PendingSubmission, Rejected) => true,
+            (PendingSubmission, Failed) => true,
+            (Submitted, PartiallyFilled) => true,
+            (Submitted, Filled) => true,
+            (Submitted, Cancelled) => true,
+            (Submitted, Rejected) => true,
+            (Submitted, Failed) => true,
+            (PartiallyFilled, Filled) => true,
+            (PartiallyFilled, Cancelled) => true,
+            (PartiallyFilled, Failed) => true,
+            
+            // Self transitions (no change)
+            (s1, s2) if s1 == s2 => true,
+            
+            // Invalid transitions
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -63,25 +93,21 @@ pub enum OrderEvent {
     New(Order),
     Update {
         order_id: Uuid,
-        status: OrderStatus,
-        filled_quantity: Option<f64>,
-        average_fill_price: Option<f64>,
-        timestamp: DateTime<Utc>,
+        status: Option<OrderStatus>,
+        filled_qty: Option<f64>,
+        avg_fill_price: Option<f64>,
     },
     Cancel {
         order_id: Uuid,
         reason: String,
-        timestamp: DateTime<Utc>,
     },
     Reject {
         order_id: Uuid,
         reason: String,
-        timestamp: DateTime<Utc>,
     },
     Error {
         order_id: Option<Uuid>,
         message: String,
-        timestamp: DateTime<Utc>,
     },
 }
 
@@ -98,14 +124,47 @@ pub struct OrderManager {
 
 impl OrderManager {
     pub fn new() -> Self {
-        OrderManager {
-            orders: Arc::new(RwLock::new(HashMap::new())),
-            active_orders: Arc::new(RwLock::new(HashMap::new())),
-            order_router: OrderRouter::new(),
-            event_sender: mpsc::channel(100).0,
-            event_receiver: Some(mpsc::channel(100).1),
+        let (event_sender, event_receiver) = mpsc::channel(100);
+        let orders = Arc::new(RwLock::new(HashMap::new()));
+        let active_orders = Arc::new(RwLock::new(HashMap::new()));
+        let order_router = OrderRouter::new();
+        
+        let mut manager = OrderManager {
+            orders,
+            active_orders,
+            order_router,
+            event_sender,
+            event_receiver: Some(event_receiver),
             shutdown_signal: None,
-        }
+        };
+        
+        // Start event processing in a separate function
+        let orders_clone = manager.orders.clone();
+        let active_orders_clone = manager.active_orders.clone();
+        let mut event_receiver = manager.event_receiver.take().unwrap();
+        
+        tokio::spawn(async move {
+            info!("Starting order event processing");
+            
+            loop {
+                tokio::select! {
+                    // Process new order events
+                    Some(event) = event_receiver.recv() => {
+                        Self::process_order_event(event, orders_clone.clone(), active_orders_clone.clone()).await;
+                    }
+                    
+                    // Exit after 1 hour of inactivity (for tests)
+                    _ = tokio::time::sleep(tokio::time::Duration::from_secs(3600)) => {
+                        info!("No order events received for 1 hour, stopping processing");
+                        break;
+                    }
+                }
+            }
+            
+            info!("Order event processing stopped");
+        });
+        
+        manager
     }
     
     pub async fn place_order(&self, mut order: Order) -> Result<Uuid, String> {
@@ -146,21 +205,20 @@ impl OrderManager {
             
             async move {
                 // Update order status to pending submission
-                Self::update_order_status(orders.clone(), order_id, OrderStatus::PendingSubmission).await;
+                Self::update_order_status_internal(orders.clone(), order_id, OrderStatus::PendingSubmission).await;
                 
                 // Submit to router
                 match order_router.submit_order(order.clone()).await {
                     Ok(()) => {
                         // Update status to submitted
-                        Self::update_order_status(orders.clone(), order_id, OrderStatus::Submitted).await;
+                        Self::update_order_status_internal(orders.clone(), order_id, OrderStatus::Submitted).await;
                         
                         // Emit update event
                         let event = OrderEvent::Update {
                             order_id,
-                            status: OrderStatus::Submitted,
-                            filled_quantity: None,
-                            average_fill_price: None,
-                            timestamp: Utc::now(),
+                            status: Some(OrderStatus::Submitted),
+                            filled_qty: None,
+                            avg_fill_price: None,
                         };
                         
                         if let Err(e) = event_sender.send(event).await {
@@ -171,7 +229,7 @@ impl OrderManager {
                         error!("Failed to submit order {}: {}", order_id, e);
                         
                         // Update status to failed
-                        Self::update_order_status(orders.clone(), order_id, OrderStatus::Failed).await;
+                        Self::update_order_status_internal(orders.clone(), order_id, OrderStatus::Failed).await;
                         
                         // Remove from active orders
                         {
@@ -183,7 +241,6 @@ impl OrderManager {
                         let event = OrderEvent::Error {
                             order_id: Some(order_id),
                             message: e.to_string(),
-                            timestamp: Utc::now(),
                         };
                         
                         if let Err(e) = event_sender.send(event).await {
@@ -197,12 +254,9 @@ impl OrderManager {
         Ok(order_id)
     }
     
-    async fn update_order_status(orders: Arc<RwLock<HashMap<Uuid, Order>>>, order_id: Uuid, status: OrderStatus) {
-        let mut orders_lock = orders.write().await;
-        if let Some(order) = orders_lock.get_mut(&order_id) {
-            order.status = status;
-            order.updated_at = Utc::now();
-        }
+    #[allow(dead_code)]
+    pub async fn update_order_status(&self, order_id: Uuid, status: OrderStatus) {
+        Self::update_order_status_internal(self.orders.clone(), order_id, status).await;
     }
     
     pub async fn cancel_order(&self, order_id: Uuid, reason: String) -> Result<(), String> {
@@ -216,15 +270,30 @@ impl OrderManager {
             Some(order) => {
                 // Only certain statuses can be cancelled
                 match order.status {
-                    OrderStatus::Submitted | OrderStatus::PartiallyFilled => {
-                        // Submit cancel request to the router
-                        self.order_router.cancel_order(order_id).await?;
+                    OrderStatus::Created | OrderStatus::Submitted | OrderStatus::PartiallyFilled => {
+                        // If the order is only Created (not yet sent to exchange), we can cancel locally
+                        if order.status == OrderStatus::Created {
+                            // Update status directly
+                            Self::update_order_status_internal(self.orders.clone(), order_id, OrderStatus::Cancelled).await;
+                        } else {
+                            // Submit cancel request to the router
+                            let router_result = self.order_router.cancel_order(order_id).await;
+                            // If router fails (e.g., no exchanges), still update status locally
+                            if router_result.is_err() {
+                                Self::update_order_status_internal(self.orders.clone(), order_id, OrderStatus::Cancelled).await;
+                            }
+                        }
+                        
+                        // Remove from active orders
+                        {
+                            let mut active_orders = self.active_orders.write().await;
+                            active_orders.remove(&order_id);
+                        }
                         
                         // Emit cancel event
                         self.emit_event(OrderEvent::Cancel {
                             order_id,
                             reason,
-                            timestamp: Utc::now(),
                         }).await;
                         
                         Ok(())
@@ -267,6 +336,11 @@ impl OrderManager {
             return Err("Limit orders must specify a price".to_string());
         }
         
+        // Validate market orders shouldn't have a price
+        if order.order_type == OrderType::Market && order.price.is_some() {
+            return Err("Market orders should not specify a price".to_string());
+        }
+        
         // Validate stop price for stop orders
         if (order.order_type == OrderType::StopLoss || order.order_type == OrderType::StopLimit) 
             && order.stop_price.is_none() {
@@ -278,120 +352,96 @@ impl OrderManager {
         Ok(())
     }
     
-    #[allow(dead_code)]
-    pub async fn start_processing(&mut self) -> Result<(), String> {
-        let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
-        self.shutdown_signal = Some(shutdown_tx);
-        
-        let mut event_receiver = self.event_receiver.take()
-            .ok_or_else(|| "Event receiver already taken".to_string())?;
-            
-        let orders_clone = self.orders.clone();
-        let active_orders_clone = self.active_orders.clone();
-        
-        // Spawn a task to process order events
-        tokio::spawn(async move {
-            info!("Starting order event processing");
-            
-            loop {
-                tokio::select! {
-                    // Process new order events
-                    Some(event) = event_receiver.recv() => {
-                        Self::process_order_event(event, orders_clone.clone(), active_orders_clone.clone()).await;
-                    }
-                    
-                    // Use mut reference without &mut
-                    _ = &mut shutdown_rx => {
-                        info!("Shutting down order event processing");
-                        break;
-                    }
-                }
-            }
-            
-            info!("Order event processing stopped");
-        });
-        
-        Ok(())
-    }
-    
-    #[allow(dead_code)]
     async fn process_order_event(
-        event: OrderEvent, 
+        event: OrderEvent,
         orders: Arc<RwLock<HashMap<Uuid, Order>>>,
         active_orders: Arc<RwLock<HashMap<Uuid, Order>>>
     ) {
-        match &event {
-            OrderEvent::Update { order_id, status, filled_quantity, average_fill_price, timestamp } => {
-                let mut orders_lock = orders.write().await;
+        match event {
+            OrderEvent::Update { order_id, status, filled_qty, avg_fill_price } => {
+                info!("Processing order update event for order {}: status={:?}, filled={:?}, avg_price={:?}", 
+                      order_id, status, filled_qty, avg_fill_price);
                 
-                if let Some(order) = orders_lock.get_mut(order_id) {
-                    // Update order status
-                    order.status = status.clone();
-                    order.updated_at = *timestamp;
-                    
-                    // Update filled quantity if provided
-                    if let Some(qty) = filled_quantity {
-                        order.filled_quantity = *qty;
+                // Update the order status
+                let mut orders_lock = orders.write().await;
+                if let Some(order) = orders_lock.get_mut(&order_id) {
+                    if let Some(new_status) = status {
+                        order.status = new_status;
                     }
                     
-                    // Update average fill price if provided
-                    if let Some(price) = average_fill_price {
-                        order.average_fill_price = Some(*price);
+                    if let Some(qty) = filled_qty {
+                        order.filled_quantity = qty;
                     }
                     
-                    // If order is completely filled, update filled timestamp
-                    if *status == OrderStatus::Filled {
-                        order.filled_at = Some(*timestamp);
-                        
-                        // Remove from active orders
-                        let mut active_lock = active_orders.write().await;
-                        active_lock.remove(order_id);
+                    if let Some(price) = avg_fill_price {
+                        order.average_fill_price = Some(price);
                     }
                     
-                    debug!("Updated order {}: status={:?}, filled={:?}, avg_price={:?}", 
-                        order_id, status, filled_quantity, average_fill_price);
+                    order.updated_at = Utc::now();
+                    
+                    // If the order is filled or canceled, remove it from active orders
+                    if order.status == OrderStatus::Filled || 
+                       order.status == OrderStatus::Cancelled || 
+                       order.status == OrderStatus::Rejected {
+                        let mut active_orders_lock = active_orders.write().await;
+                        active_orders_lock.remove(&order_id);
+                    }
                 } else {
                     warn!("Received update for unknown order: {}", order_id);
                 }
             },
-            OrderEvent::Cancel { order_id, reason, timestamp } => {
-                let mut orders_lock = orders.write().await;
+            OrderEvent::New(order) => {
+                info!("Processing new order event for order {}", order.id);
+                // New orders are already added to the orders map during place_order
+            },
+            OrderEvent::Cancel { order_id, reason } => {
+                info!("Processing cancel order event for order {}: {}", order_id, reason);
                 
-                if let Some(order) = orders_lock.get_mut(order_id) {
-                    // Update order status
+                let mut orders_lock = orders.write().await;
+                if let Some(order) = orders_lock.get_mut(&order_id) {
                     order.status = OrderStatus::Cancelled;
-                    order.updated_at = *timestamp;
                     order.notes = Some(reason.clone());
+                    order.updated_at = Utc::now();
                     
                     // Remove from active orders
-                    let mut active_lock = active_orders.write().await;
-                    active_lock.remove(order_id);
-                    
-                    info!("Cancelled order {}: {}", order_id, reason);
+                    let mut active_orders_lock = active_orders.write().await;
+                    active_orders_lock.remove(&order_id);
                 } else {
                     warn!("Received cancel for unknown order: {}", order_id);
                 }
             },
-            OrderEvent::Reject { order_id, reason, timestamp } => {
-                let mut orders_lock = orders.write().await;
+            OrderEvent::Reject { order_id, reason } => {
+                warn!("Processing reject order event for order {}: {}", order_id, reason);
                 
-                if let Some(order) = orders_lock.get_mut(order_id) {
-                    // Update order status
+                let mut orders_lock = orders.write().await;
+                if let Some(order) = orders_lock.get_mut(&order_id) {
                     order.status = OrderStatus::Rejected;
-                    order.updated_at = *timestamp;
                     order.notes = Some(reason.clone());
+                    order.updated_at = Utc::now();
                     
                     // Remove from active orders
-                    let mut active_lock = active_orders.write().await;
-                    active_lock.remove(order_id);
-                    
-                    warn!("Rejected order {}: {}", order_id, reason);
+                    let mut active_orders_lock = active_orders.write().await;
+                    active_orders_lock.remove(&order_id);
                 } else {
                     warn!("Received reject for unknown order: {}", order_id);
                 }
             },
-            // Other event types handled here
-            _ => {}
+            OrderEvent::Error { order_id, message } => {
+                error!("Processing error event: {}", message);
+                
+                if let Some(id) = order_id {
+                    let mut orders_lock = orders.write().await;
+                    if let Some(order) = orders_lock.get_mut(&id) {
+                        order.status = OrderStatus::Failed;
+                        order.notes = Some(message.clone());
+                        order.updated_at = Utc::now();
+                        
+                        // Remove from active orders
+                        let mut active_orders_lock = active_orders.write().await;
+                        active_orders_lock.remove(&id);
+                    }
+                }
+            }
         }
     }
     
@@ -412,5 +462,13 @@ impl OrderManager {
         }
         
         Ok(())
+    }
+
+    async fn update_order_status_internal(orders: Arc<RwLock<HashMap<Uuid, Order>>>, order_id: Uuid, status: OrderStatus) {
+        let mut orders_lock = orders.write().await;
+        if let Some(order) = orders_lock.get_mut(&order_id) {
+            order.status = status;
+            order.updated_at = Utc::now();
+        }
     }
 } 

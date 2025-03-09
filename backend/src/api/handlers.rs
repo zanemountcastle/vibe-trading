@@ -268,11 +268,11 @@ pub async fn place_order(
     };
     
     let time_in_force = match req.time_in_force.as_deref() {
-        Some("gtc") => TimeInForce::GoodTilCanceled,
         Some("ioc") => TimeInForce::ImmediateOrCancel,
         Some("fok") => TimeInForce::FillOrKill,
-        Some("day") => TimeInForce::DayOnly,
-        None => TimeInForce::GoodTilCanceled, // Default
+        Some("gtc") => TimeInForce::GoodTilCancelled,
+        Some("day") => TimeInForce::Day,
+        None => TimeInForce::GoodTilCancelled,
         _ => return error_response("Invalid time in force"),
     };
     

@@ -74,12 +74,22 @@ pub enum TradeDirection {
     Sell,
 }
 
+impl TradeDirection {
+    #[allow(dead_code)]
+    pub fn reverse(&self) -> Self {
+        match self {
+            TradeDirection::Buy => TradeDirection::Sell,
+            TradeDirection::Sell => TradeDirection::Buy,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TimeInForce {
-    GoodTilCanceled,
-    ImmediateOrCancel,
+    Day,
+    GoodTilCancelled,
     FillOrKill,
-    DayOnly,
+    ImmediateOrCancel,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -163,6 +173,45 @@ impl StrategyManager {
             strategy.update_params(params)
         } else {
             Err(format!("Strategy not found: {}", name))
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum StrategyState {
+    Initialized,
+    Ready,
+    Running,
+    Paused,
+    Stopping,
+    Stopped,
+    Error,
+}
+
+impl StrategyState {
+    /// Check if the current state can transition to the given state
+    #[allow(dead_code)]
+    pub fn can_transition_to(&self, next: &StrategyState) -> bool {
+        use StrategyState::*;
+        
+        match (self, next) {
+            // Valid transitions
+            (Initialized, Ready) => true,
+            (Ready, Running) => true,
+            (Running, Paused) => true,
+            (Paused, Running) => true,
+            (Running, Stopping) => true,
+            (Stopping, Stopped) => true,
+            
+            // Error can be entered from any state
+            (_, Error) => true,
+            
+            // Self transitions (no change)
+            (s1, s2) if s1 == s2 => true,
+            
+            // All other transitions are invalid
+            _ => false,
         }
     }
 } 

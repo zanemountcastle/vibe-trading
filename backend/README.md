@@ -75,4 +75,83 @@ To modify the code, edit the source files and run `cargo build` to rebuild.
 
 ## Dependencies
 
-See `Cargo.toml` for a complete list of dependencies. 
+See `Cargo.toml` for a complete list of dependencies.
+
+## Testing
+
+The backend includes a comprehensive testing suite to ensure code quality and reliability.
+
+### Running Tests
+
+To run all tests:
+```bash
+cargo test
+```
+
+To run a specific test file:
+```bash
+cargo test --test <test_file_name>
+```
+
+For example:
+```bash
+cargo test --test simple_test
+```
+
+To run tests with a single thread (helps avoid concurrency issues):
+```bash
+cargo test -- --test-threads=1
+```
+
+### Test Structure
+
+The test suite is organized into:
+
+1. **Unit Tests** - Testing individual components in isolation
+   - Exchange module tests (`tests/unit/exchange/`)
+   - Order module tests (`tests/unit/order/`)
+   - Market data module tests (`tests/unit/market_data/`)
+   - Strategy module tests (`tests/unit/strategy/`)
+
+2. **Integration Tests** - Testing how components work together
+   - Exchange and order workflow tests (`tests/integration/exchange_order_workflow.rs`)
+
+3. **Simple Test** - Basic functionality tests for core components (`tests/simple_test.rs`)
+
+### Writing New Tests
+
+When adding new tests:
+
+1. Use `#[tokio::test]` attribute for asynchronous tests
+2. Import required traits explicitly (e.g., `use arb_platform::exchange::Exchange;`)
+3. Follow existing test patterns for consistent style
+4. Ensure tests clean up after themselves (especially when working with shared resources)
+
+Example of a proper async test:
+```rust
+#[tokio::test]
+async fn test_example() {
+    // Test setup
+    let config = ExchangeConfig { /* ... */ };
+    let mut exchange = CryptoExchange::new(config);
+    
+    // Connect to the exchange
+    let result = exchange.connect().await;
+    assert!(result.is_ok());
+    
+    // Perform test assertions
+    assert!(exchange.is_connected());
+    
+    // Clean up
+    let _ = exchange.disconnect().await;
+}
+```
+
+### Code Coverage
+
+The tests aim to achieve a minimum of 95% code coverage across all modules, with particular focus on:
+
+- Exchange connectivity and order processing
+- Order management and lifecycle
+- Strategy execution and signal generation
+- Market data handling and processing 
