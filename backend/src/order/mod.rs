@@ -278,6 +278,7 @@ impl OrderManager {
         Ok(())
     }
     
+    #[allow(dead_code)]
     pub async fn start_processing(&mut self) -> Result<(), String> {
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
         self.shutdown_signal = Some(shutdown_tx);
@@ -313,6 +314,7 @@ impl OrderManager {
         Ok(())
     }
     
+    #[allow(dead_code)]
     async fn process_order_event(
         event: OrderEvent, 
         orders: Arc<RwLock<HashMap<Uuid, Order>>>,
@@ -393,10 +395,12 @@ impl OrderManager {
         }
     }
     
+    #[allow(dead_code)]
     pub fn get_event_sender(&self) -> mpsc::Sender<OrderEvent> {
         self.event_sender.clone()
     }
     
+    #[allow(dead_code)]
     pub async fn shutdown(&mut self) -> Result<(), String> {
         info!("Shutting down order manager");
         

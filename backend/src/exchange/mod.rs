@@ -3,7 +3,6 @@ use serde::{Serialize, Deserialize};
 use async_trait::async_trait;
 
 use crate::order::Order;
-use crate::order::OrderStatus as OrderStatusEnum;
 
 pub mod crypto;
 // Comment out missing modules

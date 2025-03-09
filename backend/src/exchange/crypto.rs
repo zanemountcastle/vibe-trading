@@ -14,6 +14,7 @@ use crate::order::Order;
 use crate::order::OrderStatus as OrderOrderStatus;
 
 // Add a conversion function from OrderOrderStatus to ExchangeOrderStatus
+#[allow(dead_code)]
 fn convert_order_status(status: &OrderOrderStatus) -> ExchangeOrderStatus {
     match status {
         OrderOrderStatus::Created => ExchangeOrderStatus::Pending,
@@ -28,6 +29,7 @@ fn convert_order_status(status: &OrderOrderStatus) -> ExchangeOrderStatus {
 }
 
 // Add a conversion function from ExchangeOrderStatus to OrderOrderStatus
+#[allow(dead_code)]
 fn convert_exchange_status(status: &ExchangeOrderStatus) -> OrderOrderStatus {
     match status {
         ExchangeOrderStatus::Pending => OrderOrderStatus::PendingSubmission,
